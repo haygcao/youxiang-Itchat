@@ -16,7 +16,7 @@ import time
 import json
 from untils.jd_api import JdApiClient
 from untils.suo_im import Suo_mi
-from untils.common import save_pic, del_pic
+from coupon.delivery import send_group_image
 import itchat
 from chat.itchatHelper import set_system_notice
 
@@ -41,7 +41,7 @@ def jingfen_query(group_name:str, group_material_id:str, app_key:str, secret_key
     except Exception as e:
         print(e)
         set_system_notice(f'''page_no: {page_no},\npage_size:{page_size}\n, eliteId:{group_material_id}\n发现问题''')
-        jingfen_query(group_name, group_material_id, app_key, secret_key, site_id, suo_mi_token)
+        raise
 
     # pprint.pprint(json.loads(resp.json()['jd_union_open_goods_jingfen_query_response']['result']))
     for data in json.loads(resp.json()['jd_union_open_goods_jingfen_query_response']['result'])['data']:
@@ -113,13 +113,7 @@ def jingfen_query(group_name:str, group_material_id:str, app_key:str, secret_key
                 pass
             else:
                 image_url = image['url']
-                filename = save_pic(image_url, sku_id)
-                groups = itchat.search_chatrooms(name=f'''{group_name}''')
-                for room in groups:
-                    room_name = room['UserName']
-                    time.sleep(random.randint(5,10))
-                    itchat.send('@img@%s' % (f'''{filename}'''), room_name)
-                del_pic(filename)
+                send_group_image(group_name, image_url, sku_id, 5, 10)
                 # print(image_url)
 
         groups = itchat.search_chatrooms(name=f'''{group_name}''')

@@ -1,72 +1,92 @@
-import time
 import json
-import itchat
 import random
-from untils.common import save_pic, del_pic
-from untils.pdd_api import PddApiClient
-from chat.itchatHelper import set_system_notice
 
-def pdd_share_text(group_name: str, group_material_id: str, app_key:str, secret_key:str, p_id: str):
-    '''
-    :param group_name:
-    :param material_id:
-    :return:
-    '''
+from coupon.delivery import send_group_image_text
+from coupon.pricing import clamp_min, format_fen
+from untils.retry import retry_call
+
+
+def pdd_share_text(group_name: str, group_material_id: str, app_key: str, secret_key: str, p_id: str):
+    def fetch_goods():
+        offset = str(random.randint(1, 295))
+        limit = str(random.randint(3, 5))
+        client = create_pdd_client(app_key, secret_key)
+        return client.call(
+            "pdd.ddk.top.goods.list.query",
+            {
+                "offset": offset,
+                "limit": limit,
+                "p_id": p_id,
+            },
+        )
+
+    def notice_error(exception, attempt):
+        send_system_notice("pinduoduo attempt: {}\n{}".format(attempt, exception))
+
+    resp = retry_call("pinduoduo goods query", fetch_goods, on_error=notice_error)
+    goods_list = json.loads(resp.text)["top_goods_list_get_response"]["list"]
+
+    for data in goods_list:
+        short_url = promotion_url_generate(
+            app_key=app_key,
+            secret_key=secret_key,
+            p_id=p_id,
+            goods_id_list=int(data["goods_id"]),
+            search_id=data["search_id"],
+        )
+        send_group_image_text(
+            group_name,
+            data["goods_thumbnail_url"],
+            data["goods_id"],
+            build_pdd_text(data, short_url),
+        )
+
+
+def build_pdd_text(data, short_url):
+    base_price = min(int(data["min_group_price"]), int(data["min_normal_price"]))
+    coupon_price = clamp_min(base_price - int(data["coupon_discount"]))
+    return " {}\n{}\n{}\n-----------------\n{}:\n{}".format(
+        data["goods_name"],
+        "\u3010\u73b0\u4ef7\u3011\u00a5{}".format(format_fen(base_price)),
+        "\u3010\u5185\u90e8\u4ef7\u3011\u00a5{}".format(format_fen(coupon_price)),
+        "\u62a2\u8d2d\u5730\u5740",
+        short_url,
+    )
+
+
+def promotion_url_generate(app_key: str, secret_key: str, p_id: str, goods_id_list: int, search_id: str):
+    client = create_pdd_client(app_key, secret_key)
+    resp = client.call(
+        "pdd.ddk.goods.promotion.url.generate",
+        {
+            "goods_id_list": "[{}]".format(goods_id_list),
+            "search_id": search_id,
+            "p_id": p_id,
+        },
+    )
     try:
-        offset = str(random.randint(1, 295)) # top.goods.list.query 好像只有300个商品
-        limit = str(random.randint(3, 5))  #
+        return json.loads(resp.text)["goods_promotion_url_generate_response"]["goods_promotion_url_list"][0][
+            "mobile_short_url"
+        ]
+    except Exception as exception:
+        print(exception)
+        send_system_notice(
+            "goods_id_list: {}\nsearch_id: {}\np_id: {}\n\nCannot get promotion url".format(
+                goods_id_list,
+                search_id,
+                p_id,
+            )
+        )
+        return ""
 
-        client = PddApiClient(app_key=app_key, secret_key=secret_key)
-        resp = client.call("pdd.ddk.top.goods.list.query",
-                                {"offset": offset,
-                                 "limit": limit,
-                                 "p_id": p_id
-                                 })
-    except Exception as e:
-        print(e)
-        set_system_notice(f'''offset: {offset},\nlimit:{limit}\n\n发现问题''')
-        pdd_share_text(group_name, group_material_id, app_key, secret_key, secret_key, p_id)
 
-    for data in json.loads(resp.text)['top_goods_list_get_response']['list'] :
-        goods_id = data['goods_id']
-        goods_name = data['goods_name']
-        search_id = data['search_id']
-        goods_thumbnail_url = data['goods_thumbnail_url']
-        min_normal_price = int(data['min_normal_price']) # 原价
-        min_group_price = int(data['min_group_price']) # 折扣价
-        coupon_discount = int(data['coupon_discount'])  # 券价
-        if min_group_price < min_normal_price:
-            cal_price = min_group_price
-        else:
-            cal_price = min_normal_price
-        cal_price_str = str(cal_price)[:len(str(cal_price))-2] if len(str(cal_price)[:len(str(cal_price))-2]) > 0 else '0' + '.' + str(cal_price)[len(str(cal_price))-2:]
-        price = str(cal_price - coupon_discount)[:len(str(cal_price - coupon_discount))-2] \
-            if len(str(cal_price - coupon_discount)[:len(str(cal_price - coupon_discount))-2]) > 0 else '0'+ '.' \
-                + str(cal_price - coupon_discount)[len(str(cal_price - coupon_discount))-2:]
-        short_url = promotion_url_generate(app_key=app_key, secret_key=secret_key, p_id=p_id, goods_id_list=int(goods_id), search_id= search_id)
+def send_system_notice(text):
+    from chat.itchatHelper import set_system_notice
 
-        groups = itchat.search_chatrooms(name=f'''{group_name}''')
-        for room in groups:
-            room_name = room['UserName']
-            time.sleep(random.randint(1, 5))
-            filename = save_pic(goods_thumbnail_url, goods_id)
-            # 发送图片
-            itchat.send('@img@%s' % (f'''{filename}'''), room_name)
-            time.sleep(random.randint(1, 3))
-            itchat.send(f''' {goods_name} \n【现价】¥{cal_price_str}\n【内部价】¥{price}\n-----------------\n抢购地址:\n{short_url}''', room_name)
-            del_pic(filename)
+    set_system_notice(text)
 
-def promotion_url_generate(app_key:str, secret_key:str, p_id: str, goods_id_list: int, search_id:str):
-    client = PddApiClient(app_key=app_key, secret_key=secret_key)
-    resp = client.call("pdd.ddk.goods.promotion.url.generate",
-                       {"goods_id_list": f'''[{goods_id_list}]''',
-                        "search_id": search_id,
-                        "p_id": p_id
-                        })
-    try:
-        short_url = json.loads(resp.text)['goods_promotion_url_generate_response']['goods_promotion_url_list'][0]['mobile_short_url']
-    except Exception as e:
-        print(e)
-        set_system_notice(f'''goods_id_list: {goods_id_list},\nsearch_id:{search_id}\np_id:{p_id}\n\n无法获取连接''')
-        short_url = ""
-    return short_url
+
+def create_pdd_client(app_key, secret_key):
+    from untils.pdd_api import PddApiClient
+
+    return PddApiClient(app_key=app_key, secret_key=secret_key)

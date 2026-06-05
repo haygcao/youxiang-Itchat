@@ -1,126 +1,184 @@
 # coding=utf-8
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
+from dataclasses import dataclass
+from importlib import import_module
+from typing import Dict, Iterable, Tuple
+
 from untils import config
-from coupon.tb import tb_share_text
-from coupon.jd import jingfen_query
-from coupon.pdd import pdd_share_text
-from coupon.sn import sn_share_text
+
+
+@dataclass(frozen=True)
+class PlatformJob:
+    config_key: str
+    required_keys: Tuple[str, ...]
+    task_path: str
+    kwargs_map: Dict[str, str]
+    jitter: int = 300
+
+
+PLATFORM_JOBS = {
+    "taobao": PlatformJob(
+        config_key="taobao",
+        required_keys=("app_key", "app_secret", "adzone_id"),
+        task_path="coupon.tb:tb_share_text",
+        kwargs_map={
+            "group_name": "group_name",
+            "material_id": "group_material_id",
+            "app_key": "app_key",
+            "app_secret": "app_secret",
+            "adzone_id": "adzone_id",
+        },
+    ),
+    "jingdong": PlatformJob(
+        config_key="jingdong",
+        required_keys=("app_key", "app_secret", "site_id", "suo_im"),
+        task_path="coupon.jd:jingfen_query",
+        kwargs_map={
+            "group_name": "group_name",
+            "group_material_id": "group_material_id",
+            "app_key": "app_key",
+            "secret_key": "app_secret",
+            "site_id": "site_id",
+            "suo_mi_token": "suo_im",
+        },
+    ),
+    "pinduoduo": PlatformJob(
+        config_key="pinduoduo",
+        required_keys=("app_key", "app_secret", "p_id"),
+        task_path="coupon.pdd:pdd_share_text",
+        kwargs_map={
+            "group_name": "group_name",
+            "group_material_id": "group_material_id",
+            "app_key": "app_key",
+            "secret_key": "app_secret",
+            "p_id": "p_id",
+        },
+        jitter=0,
+    ),
+    "suning": PlatformJob(
+        config_key="suning",
+        required_keys=("app_key", "app_secret", "ad_book_id"),
+        task_path="coupon.sn:sn_share_text",
+        kwargs_map={
+            "group_name": "group_name",
+            "group_material_id": "group_material_id",
+            "app_key": "app_key",
+            "secret_key": "app_secret",
+            "ad_book_id": "ad_book_id",
+        },
+        jitter=0,
+    ),
+}
+
 
 def job_tasks():
+    scheduler_cls, event_job_executed, event_job_error = get_scheduler_dependencies()
+    scheduler = scheduler_cls(timezone="Asia/Shanghai")
+    conf = config.copy()
 
-    scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
+    for platform_job in PLATFORM_JOBS.values():
+        register_platform_jobs(scheduler, platform_job, conf)
 
-    tb_job_tasks(scheduler)
-    jd_job_task(scheduler)
-    pdd_job_task(scheduler)
-    sn_job_task(scheduler)
-
-    # 加一个监控
-    scheduler.add_listener(scheduler_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
+    scheduler.add_listener(scheduler_listener, event_job_executed | event_job_error)
     scheduler.start()
+    return scheduler
+
 
 def tb_job_tasks(scheduler):
+    register_platform_jobs(scheduler, PLATFORM_JOBS["taobao"], config.copy())
 
-    conf = config.get_yaml()
-    conf = conf.get('taobao')
-    if not conf.get('is_open'):
-        return
 
-    if conf.get('app_key') =='' or conf.get('app_secret') =='' or conf.get('adzone_id') =='':
-        return
-
-    app_key = conf.get('app_key')
-    app_secret = conf.get('app_secret')
-    adzone_id = conf.get('adzone_id')
-
-    chat_groups = conf.get('chat_groups')
-    for chat_group in chat_groups:
-        print(chat_group['group_name'])
-        scheduler.add_job(func=tb_share_text,
-                          kwargs={'group_name': chat_group['group_name'], 'material_id': chat_group['group_material_id'],
-                                  'app_key': app_key, 'app_secret': app_secret, 'adzone_id': adzone_id},
-                          trigger='cron', hour=f'''{chat_group['hour']}''', minute=f'''{chat_group['minute']}''', second=0,  jitter=300, id=f'''{chat_group['group_name']}''')
 def jd_job_task(scheduler):
+    register_platform_jobs(scheduler, PLATFORM_JOBS["jingdong"], config.copy())
 
-    conf = config.get_yaml()
-    conf = conf.get('jingdong')
-    if not conf.get('is_open'):
-        return
-
-    if conf.get('app_key') =='' or conf.get('app_secret') =='' or conf.get('site_id') =='' or conf.get('suo_im') =='':
-        return
-
-    app_key = conf.get('app_key')
-    app_secret = conf.get('app_secret')
-    site_id = conf.get('site_id')
-    suo_im = conf.get('suo_im')
-
-    chat_groups = conf.get('chat_groups')
-    for chat_group in chat_groups:
-        print(chat_group['group_name'])
-        scheduler.add_job(func=jingfen_query,
-                          kwargs={'group_name': chat_group['group_name'], 'group_material_id': chat_group['group_material_id'],
-                                  'app_key': app_key, 'secret_key': app_secret, 'site_id': site_id, 'suo_mi_token': suo_im},
-                          trigger='cron', hour=f'''{chat_group['hour']}''', minute=f'''{chat_group['minute']}''', second=0,  jitter=300, id=f'''{chat_group['group_name']}''')
 
 def pdd_job_task(scheduler):
+    register_platform_jobs(scheduler, PLATFORM_JOBS["pinduoduo"], config.copy())
 
-    conf = config.get_yaml()
-    conf = conf.get('pinduoduo')
-    if not conf.get('is_open'):
-        return
-
-    if conf.get('app_key') == '' or conf.get('app_secret') == '' or conf.get('p_id') == '':
-        return
-
-    app_key = conf.get('app_key')
-    app_secret = conf.get('app_secret')
-    p_id = conf.get('p_id')
-
-    chat_groups = conf.get('chat_groups')
-    for chat_group in chat_groups:
-        print(chat_group['group_name'])
-        scheduler.add_job(func=pdd_share_text,
-                          kwargs={'group_name': chat_group['group_name'], 'group_material_id': chat_group['group_material_id'],
-                                  'app_key': app_key, 'secret_key': app_secret, 'p_id': p_id},
-                          trigger='cron', hour=f'''{chat_group['hour']}''', minute=f'''{chat_group['minute']}''', second=0,  jitter=0, id=f'''{chat_group['group_name']}''')
 
 def sn_job_task(scheduler):
+    register_platform_jobs(scheduler, PLATFORM_JOBS["suning"], config.copy())
 
-    conf = config.get_yaml()
-    conf = conf.get('suning')
-    if not conf.get('is_open'):
+
+def register_platform_jobs(scheduler, platform_job: PlatformJob, all_conf: Dict):
+    platform_conf = all_conf.get(platform_job.config_key) or {}
+    if not platform_conf.get("is_open"):
         return
 
-    if conf.get('app_key') == '' or conf.get('app_secret') == '' or conf.get('ad_book_id') == '':
+    missing_keys = [
+        key for key in platform_job.required_keys
+        if not platform_conf.get(key)
+    ]
+    if missing_keys:
+        print(
+            "{} scheduler skipped, missing config: {}".format(
+                platform_job.config_key,
+                ", ".join(missing_keys),
+            )
+        )
         return
 
-    app_key = conf.get('app_key')
-    app_secret = conf.get('app_secret')
-    ad_book_id = conf.get('ad_book_id')
+    for chat_group in iter_chat_groups(platform_conf):
+        print(chat_group["group_name"])
+        scheduler.add_job(
+            func=resolve_task(platform_job.task_path),
+            kwargs=build_job_kwargs(platform_job, platform_conf, chat_group),
+            trigger="cron",
+            hour=str(chat_group["hour"]),
+            minute=str(chat_group["minute"]),
+            second=0,
+            jitter=platform_job.jitter,
+            id=build_job_id(platform_job.config_key, chat_group),
+            replace_existing=True,
+        )
 
-    chat_groups = conf.get('chat_groups')
-    for chat_group in chat_groups:
-        print(chat_group['group_name'])
-        scheduler.add_job(func=sn_share_text,
-                          kwargs={'group_name': chat_group['group_name'], 'group_material_id': chat_group['group_material_id'],
-                                  'app_key': app_key, 'secret_key': app_secret, 'ad_book_id': ad_book_id},
-                          trigger='cron', hour=f'''{chat_group['hour']}''', minute=f'''{chat_group['minute']}''', second=0,  jitter=0, id=f'''{chat_group['group_name']}''')
+
+def iter_chat_groups(platform_conf: Dict) -> Iterable[Dict]:
+    for chat_group in platform_conf.get("chat_groups") or []:
+        if all(chat_group.get(key) for key in ("group_name", "group_material_id", "hour", "minute")):
+            yield chat_group
+
+
+def build_job_kwargs(platform_job: PlatformJob, platform_conf: Dict, chat_group: Dict) -> Dict:
+    kwargs = {}
+    for task_key, config_key in platform_job.kwargs_map.items():
+        kwargs[task_key] = chat_group.get(config_key, platform_conf.get(config_key))
+    return kwargs
+
+
+def build_job_id(platform_name: str, chat_group: Dict) -> str:
+    return "{}:{}".format(platform_name, chat_group["group_name"])
+
+
+def resolve_task(task_path: str):
+    module_name, function_name = task_path.split(":", 1)
+    module = import_module(module_name)
+    return getattr(module, function_name)
+
+
+def get_scheduler_dependencies():
+    from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
+    from apscheduler.schedulers.background import BackgroundScheduler
+
+    return BackgroundScheduler, EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 
 
 def scheduler_listener(event):
-    '''
-    监听程序，如果发现错误程序终止
-    :param event:
-    :return:
-    '''
     if event.exception:
-        print(f'''Error: JOB_ID: {event.job_id}, 运行时间：{(event.scheduled_run_time).strftime("%Y-%m-%d %H:%M:%S.%f")[0:19]}, 任务出错了！所有程序暂停！''')
-        # 别闹，不会暂停，就是一轮错误罢了。
+        print(
+            "Error: JOB_ID: {}, run_time: {}, job failed.".format(
+                event.job_id,
+                event.scheduled_run_time.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+        )
     else:
-        print(f'''Success: JOB_ID: {event.job_id}, 运行时间：{(event.scheduled_run_time).strftime("%Y-%m-%d %H:%M:%S.%f")[
-                                                       :-3]}, 任务运行成功，继续运行...''')
+        print(
+            "Success: JOB_ID: {}, run_time: {}, job completed.".format(
+                event.job_id,
+                event.scheduled_run_time.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+        )
+
 
 if __name__ == '__main__':
+    config.init()
     job_tasks()

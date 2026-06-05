@@ -3,7 +3,7 @@
 """
 
 """
-from chat.wechat import *
+from chat.wechat import run
 
 if __name__ == '__main__':
     run()

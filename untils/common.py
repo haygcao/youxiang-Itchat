@@ -9,13 +9,16 @@ import os
 import urllib.request
 import datetime
 import sys
+import tempfile
+from urllib.parse import urlparse
 
 __all__ = [
     'FILEHELPER_MARK', 'FILEHELPER',
-    'is_json', 'md5_encode', '']
+    'is_json', 'md5_encode']
 
 FILEHELPER_MARK = ['文件传输助手', 'filehelper']  # 文件传输助手标识
 FILEHELPER = 'filehelper'
+PIC_DIR = os.path.join(tempfile.gettempdir(), 'youxiang-itchat')
 
 def is_json(resp):
     """
@@ -56,10 +59,14 @@ def save_pic(img_url, item_id):
     :return: filename str, 返回一个图片名称，用来定位删除的。
     '''
     try:
-        file_suffix = os.path.splitext(img_url)[1]
+        os.makedirs(PIC_DIR, exist_ok=True)
+        file_suffix = get_url_suffix(img_url)
         # print(file_suffix)
         # 拼接图片名（包含路径）
-        filename = f'''tb_{datetime.datetime.now().strftime("%y%m%d-%H%M%S")}_{item_id}{file_suffix}'''
+        filename = os.path.join(
+            PIC_DIR,
+            'tb_{}_{}{}'.format(datetime.datetime.now().strftime("%y%m%d-%H%M%S-%f"), item_id, file_suffix),
+        )
         # print(filename)
         # 下载图片，并保存到文件夹中
         urllib.request.urlretrieve(img_url, filename=filename)
@@ -73,7 +80,13 @@ def save_pic(img_url, item_id):
         return
 
 def del_pic(filename):
-    os.remove(filename)
+    if filename and os.path.exists(filename):
+        os.remove(filename)
+
+
+def get_url_suffix(url):
+    suffix = os.path.splitext(urlparse(str(url)).path)[1]
+    return suffix or '.jpg'
 
 def short_2_long(short_url: str) -> str:
     '''

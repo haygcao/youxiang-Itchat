@@ -1,75 +1,76 @@
-import time
 import json
-import itchat
 import random
-from untils.common import save_pic, del_pic
-from untils.tb_top_api import TbApiClient
+
+from coupon.delivery import find_group_usernames, send_image, send_text
+from coupon.pricing import format_price
+from untils.retry import retry_call
+
 
 def tb_share_text(group_name: str, material_id: str, app_key, app_secret, adzone_id):
-    '''
+    client = create_taobao_client(app_key, app_secret, adzone_id)
+    selected_material_id = choose_material_id(material_id)
+    print(selected_material_id)
 
-    :param group_name:
-    :param material_id:
-    :return:
-    '''
-    try:
-        material_id = str(random.choices(material_id.split(','))[0])
-        print(material_id)
-        groups = itchat.search_chatrooms(name=f'''{group_name}''')
-        for room in groups:
-            group_name = room['UserName']
-            time.sleep(random.randint(1, 5))
-            tb_client = TbApiClient(app_key=app_key, secret_key=app_secret, adzone_id=adzone_id)
-            res = tb_client.taobao_tbk_dg_optimus_material(material_id)
-            json_data = json.loads(res)['tbk_dg_optimus_material_response']['result_list']['map_data']
-            count = 0
-            for item in json_data:
-                count += 1
-                coupon_amount = 0
-                coupon_share_url = ""
-                title = ""
-                if str(item).find("coupon_share_url") > -1:
-                    coupon_share_url = "https:" + item['coupon_share_url']
-                    coupon_amount = item['coupon_amount']
-                    pict_url = "https:" + str(item['pict_url'])
-                    title = item['title']
-                    item_id = item['item_id']
-                    filename = save_pic(pict_url, item_id)
-                    zk_final_price = item['zk_final_price']
-                    # 发送图片
-                    itchat.send('@img@%s' % (f'''{filename}'''), group_name)
+    def fetch_goods():
+        res = client.taobao_tbk_dg_optimus_material(selected_material_id)
+        return json.loads(res)["tbk_dg_optimus_material_response"]["result_list"]["map_data"]
 
-                    time.sleep(2)
-                    itchat.send(f'''{title}\n【在售价】¥{zk_final_price}\n【券后价】¥{round(float(zk_final_price) - float(coupon_amount), 2)}''', group_name)
-                    time.sleep(random.randint(1, 3))
-                    text = f'''{tb_client.taobao_tbk_tpwd_create(title, coupon_share_url)}'''
-                    start_index = text.find('￥')
-                    itchat.send(f'''({text[start_index: 13+start_index]})''', group_name)
-                    time.sleep(2)
-                    del_pic(filename)
-                else:
-                    click_url = "https:" + item['click_url']
-                    title = item['title']
-                    item_id = item['item_id']
-                    pict_url = "https:" + str(item['pict_url'])
-                    zk_final_price = item['zk_final_price']
-                    print(pict_url)
-                    filename = save_pic(pict_url, item_id)
-                    itchat.send('@img@%s' % (f'''{filename}'''), group_name)
-                    time.sleep(2)
-                    itchat.send(f'''{title}\n【在售价】¥{zk_final_price}\n【券后价】¥{round(float(zk_final_price) - float(coupon_amount), 2)}''', group_name)
-                    time.sleep(random.randint(1, 3))
-                    text = f'''{tb_client.taobao_tbk_tpwd_create(title, coupon_share_url)}'''
-                    start_index = text.find('￥')
-                    itchat.send(f'''({text[start_index: 13+start_index]})''', group_name)
-                    time.sleep(2)
-                    del_pic(filename)
-                    time.sleep(2)
-                    del_pic(filename)
-    except Exception as e:
-        print(e)
-        tb_share_text(group_name, material_id, app_key, app_secret, adzone_id)
+    goods_list = retry_call("taobao material query", fetch_goods)
+    for room_name in find_group_usernames(group_name):
+        for item in goods_list:
+            send_taobao_item(room_name, client, item)
+
+
+def choose_material_id(material_id):
+    material_ids = [item.strip() for item in str(material_id).split(",") if item.strip()]
+    if not material_ids:
+        raise ValueError("material_id cannot be empty")
+    return str(random.choice(material_ids))
+
+
+def send_taobao_item(room_name, client, item):
+    image_url = "https:" + str(item["pict_url"])
+    token = create_tpwd(client, item["title"], get_share_url(item))
+
+    send_image(room_name, image_url, item["item_id"], 1, 5)
+    send_text(room_name, build_taobao_text(item), 2, 2)
+    send_text(room_name, "({})".format(token), 1, 3)
+
+
+def build_taobao_text(item):
+    final_price = float(item["zk_final_price"])
+    coupon_amount = float(item.get("coupon_amount", 0) or 0)
+    return "{}\n{}\n{}".format(
+        item["title"],
+        "\u3010\u5728\u552e\u4ef7\u3011\u00a5{}".format(format_price(final_price)),
+        "\u3010\u5238\u540e\u4ef7\u3011\u00a5{}".format(format_price(final_price - coupon_amount)),
+    )
+
+
+def get_share_url(item):
+    if item.get("coupon_share_url"):
+        return "https:" + item["coupon_share_url"]
+    return "https:" + item["click_url"]
+
+
+def create_tpwd(client, title, share_url):
+    text = str(client.taobao_tbk_tpwd_create(title, share_url))
+    start_index = find_tpwd_start(text)
+    if start_index == -1:
+        return text
+    return text[start_index: 13 + start_index]
+
+
+def find_tpwd_start(text):
+    indexes = [text.find(symbol) for symbol in ("\uffe5", "\u00a5", "?") if text.find(symbol) != -1]
+    return min(indexes) if indexes else -1
+
+
+def create_taobao_client(app_key, app_secret, adzone_id):
+    from untils.tb_top_api import TbApiClient
+
+    return TbApiClient(app_key=app_key, secret_key=app_secret, adzone_id=adzone_id)
 
 
 if __name__ == '__main__':
-    print(f'''tb function''')
+    print("tb function")

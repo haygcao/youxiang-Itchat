@@ -7,3 +7,5 @@ pandas==0.24.2
 pyzbar==0.1.8
 Pillow==8.3.2
 suning-sdk==1.0.0
+PyYAML==5.4.1
+requests==2.26.0

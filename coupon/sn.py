@@ -3,7 +3,7 @@
 
 import random
 import time
-from untils.common import save_pic, del_pic
+from coupon.delivery import send_group_image
 import itchat
 import suning.api as api
 from chat.itchatHelper import set_system_notice
@@ -43,13 +43,7 @@ def sn_share_text(group_name: str, group_material_id: str, app_key:str, secret_k
                 else:
                     image_url = image['picUrl'].replace('_200w_200h_4e','')
                     print(image_url)
-                    groups = itchat.search_chatrooms(name=f'''{group_name}''')
-                    for room in groups:
-                        room_name = room['UserName']
-                        time.sleep(random.randint(5, 10))
-                        filename = save_pic(image_url, commodityCode)
-                        itchat.send('@img@%s' % (f'''{filename}'''), room_name)
-                    del_pic(filename)
+                    send_group_image(group_name, image_url, commodityCode, 5, 10)
 
             pgPrice = data['pgInfo']['pgPrice'] # 拼购价
             pgNum = data['pgInfo']['pgNum'] # 拼购价
@@ -125,7 +119,7 @@ def sn_share_text(group_name: str, group_material_id: str, app_key:str, secret_k
     except Exception as e:
         print(e)
         set_system_notice(f'''苏宁：offset: {offset},\nlimit:{limit}\n\n发现问题''')
-        sn_share_text(group_name, group_material_id, app_key, secret_key, ad_book_id)
+        raise
 
 def promotion_url_generate(app_key:str, secret_key:str, ad_book_id: str, comm_code: int, mert_code:str):
     client = api.StorepromotionurlQueryRequest()
