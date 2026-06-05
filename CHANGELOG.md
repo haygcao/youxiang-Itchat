@@ -31,7 +31,7 @@
 - Added explicit `PyYAML` and `requests` runtime dependencies used by the project.
 - Removed unused runtime dependencies from `requirements.txt`.
 - Upgraded maintained runtime dependencies to current patched releases.
-- Updated the Docker image baseline from Python 3.7 to Python 3.11.
+- Updated the Docker image baseline from Python 3.7 to Python 3.13 Alpine.
 
 ### Documentation
 

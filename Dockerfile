@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.13-alpine
 
 MAINTAINER Snow Wang <admin@farseer.vip>
 
@@ -7,7 +7,8 @@ COPY requirements.txt requirements.txt
 COPY . /youxiang
 
 ENV TZ=Asia/Shanghai
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo '$TZ' > /etc/timezone && \
-    pip install -r requirements.txt
+RUN apk add --no-cache tzdata zbar && \
+    cp /usr/share/zoneinfo/$TZ /etc/localtime && echo "$TZ" > /etc/timezone && \
+    pip install --no-cache-dir -r requirements.txt
     
 ENTRYPOINT ["python", "/youxiang/main.py"]
